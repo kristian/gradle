@@ -16,6 +16,7 @@ import configurations.SmokeTests
 import jetbrains.buildServer.configs.kotlin.v2018_2.BuildType
 import jetbrains.buildServer.configs.kotlin.v2018_2.ErrorConsumer
 import jetbrains.buildServer.configs.kotlin.v2018_2.Validatable
+import java.io.File
 
 enum class StageNames(override val stageName: String, override val description: String, override val uuid: String) : StageName {
     QUICK_FEEDBACK_LINUX_ONLY("Quick Feedback - Linux Only", "Run checks and functional tests (embedded executer, Linux)", "QuickFeedbackLinuxOnly"),
@@ -199,46 +200,93 @@ data class CIBuildModel(
         GradleSubproject("internalAndroidPerformanceTesting", unitTests = false, functionalTests = false),
         GradleSubproject("performance", unitTests = false, functionalTests = false),
         GradleSubproject("runtimeApiInfo", unitTests = false, functionalTests = false),
-        GradleSubproject("smokeTest", unitTests = false, functionalTests = false))
+        GradleSubproject("smokeTest", unitTests = false, functionalTests = false)),
+    val testClassTimes: List<BuildTypeTestClassTime>
 ) {
     val buildTypeBuckets: List<BuildTypeBucket>
 
     init {
-        val subprojectMap = subProjects.map { it.name to it }.toMap()
-        val buckets = mapOf(
-            "resources" to listOf("resources", "resourcesGcs", "resourcesHttp", "resourcesS3", "resourcesSftp"),
-            "platformBase" to listOf("platformBase", "platformJvm", "platformNative"),
-            "bucket1" to listOf("kotlinDslProviderPlugins", "buildCachePackaging", "native", "snapshots", "internalPerformanceTesting", "internalIntegTesting", "execution", "publish", "ear", "languageJvm"),
-            "bucket2" to listOf("baseServices", "processServices", "messaging", "buildProfile", "modelGroovy"),
-            "bucket3" to listOf("javascript", "fileCollections", "buildCache", "toolingNative", "buildCacheHttp"),
-            "bucket4" to listOf("antlr", "languageGroovy", "reporting", "diagnostics", "versionControl"),
-            "bucket5" to listOf("testingBase", "testingNative", "wrapper", "ideNative"),
-            "bucket7" to listOf("jacoco", "idePlay"),
-            "bucket8" to listOf("signing", "ivy"),
-            "bucket9" to listOf("kotlinDsl", "kotlinDslToolingBuilders"),
-            "bucket10" to listOf("modelCore", "ide"),
-            "bucket11" to listOf("codeQuality", "persistentCache")
-        )
-        val largeSubprojects = mapOf(
-            "integTest" to 3,
-            "core" to 4,
-            "dependencyManagement" to 3,
-            "toolingApi" to 2,
-            "samples" to 2,
-            "launcher" to 2,
-            "languageJava" to 2)
+        buildTypeBuckets = splitIntoBuckets(subProjects, testClassTimes)
+//        val subprojectMap = subProjects.map { it.name to it }.toMap()
+//        val buckets = mapOf(
+//            "resources" to listOf("resources", "resourcesGcs", "resourcesHttp", "resourcesS3", "resourcesSftp"),
+//            "platformBase" to listOf("platformBase", "platformJvm", "platformNative"),
+//            "bucket1" to listOf("kotlinDslProviderPlugins", "buildCachePackaging", "native", "snapshots", "internalPerformanceTesting", "internalIntegTesting", "execution", "publish", "ear", "languageJvm"),
+//            "bucket2" to listOf("baseServices", "processServices", "messaging", "buildProfile", "modelGroovy"),
+//            "bucket3" to listOf("javascript", "fileCollections", "buildCache", "toolingNative", "buildCacheHttp"),
+//            "bucket4" to listOf("antlr", "languageGroovy", "reporting", "diagnostics", "versionControl"),
+//            "bucket5" to listOf("testingBase", "testingNative", "wrapper", "ideNative"),
+//            "bucket7" to listOf("jacoco", "idePlay"),
+//            "bucket8" to listOf("signing", "ivy"),
+//            "bucket9" to listOf("kotlinDsl", "kotlinDslToolingBuilders"),
+//            "bucket10" to listOf("modelCore", "ide"),
+//            "bucket11" to listOf("codeQuality", "persistentCache")
+//        )
+//        val largeSubprojects = mapOf(
+//            "integTest" to 3,
+//            "core" to 4,
+//            "dependencyManagement" to 3,
+//            "toolingApi" to 2,
+//            "samples" to 2,
+//            "launcher" to 2,
+//            "languageJava" to 2)
+//
+//        val nonTrivialBuckets = listOf<BuildTypeBucket>(
+//            SubprojectBucket(name = "AllUnitTest", subprojects = subProjects.filter { it.hasOnlyUnitTests() })
+//        ) + buckets.map { entry ->
+//            SubprojectBucket(name = entry.key, subprojects = entry.value.map { subprojectMap.getValue(it) })
+//        } + largeSubprojects.map { entry ->
+//            SubprojectSplit(subproject = subprojectMap.getValue(entry.key), total = entry.value)
+//        }
+//        val handledSubprojects = nonTrivialBuckets.flatMap { it.getSubprojectNames() }
+//        buildTypeBuckets = nonTrivialBuckets + subProjects.filter { !handledSubprojects.contains(it.name) }
+    }
 
-        val nonTrivialBuckets = listOf<BuildTypeBucket>(
-            SubprojectBucket(name = "AllUnitTest", subprojects = subProjects.filter { it.hasOnlyUnitTests() })
-        ) + buckets.map { entry ->
-            SubprojectBucket(name = entry.key, subprojects = entry.value.map { subprojectMap.getValue(it) })
-        } + largeSubprojects.map { entry ->
-            SubprojectSplit(subproject = subprojectMap.getValue(entry.key), total = entry.value)
-        }
-        val handledSubprojects = nonTrivialBuckets.flatMap { it.getSubprojectNames() }
-        buildTypeBuckets = nonTrivialBuckets + subProjects.filter { !handledSubprojects.contains(it.name) }
+
+}
+
+//fun splitIntoBuckets(subProjects: List<GradleSubproject>,
+//                     testClassTimes: List<BuildTypeTestClassTime>,
+//                     bucketNumber: Int): List<BuildTypeBucket> {
+//    // First, we need to know
+//}
+
+fun createFunctionalTestsFor(model: CIBuildModel,
+                             stage: Stage,
+                             testCoverage: TestCoverage,
+                             testClassTimes: List<BuildTypeTestClassTime>,
+                             bucketNumber: Int): List<FunctionalTest> {
+    val subProjectToAllTestClassTime: Map<String, List<TestClassTime>> = subProjectTestClassTimes(model, testClassTimes, testCoverage)
+    val totalBuildTime = subProjectToAllTestClassTime.values.flatten().sumBy { it.builtTimeMs }
+    val buildTimePerBucket = totalBuildTime/bucketNumber
+
+}
+
+fun subProjectTestClassTimes(model: CIBuildModel,
+                             testClassTimes: List<BuildTypeTestClassTime>,
+                             testCoverage: TestCoverage): Map<String, List<TestClassTime>> {
+    return testClassTimes.find { it.name == testCoverage.asId(model) }?.let { buildType ->
+        buildType.testClassTimes.groupBy { findOutSubProject(it.testClass) }
+    } ?: emptyMap()
+}
+
+// Search subprojects
+fun findOutSubProject(testClassName: String): String {
+    val subProjectDir = File("../subprojects").listFiles()!!.find { inSubProjectDir(it!!, testClassName) }
+    return subProjectDir?.let { kebabCaseToCamelCase(it.name) } ?: "UNKNOWN"
+}
+
+fun kebabCaseToCamelCase(kebabCase: String): String {
+    return kebabCase.split('-').joinToString("") { it.capitalize() }.decapitalize()
+}
+
+fun inSubProjectDir(subProjectDir: File, testClassName: String): Boolean {
+    return listOf("test", "crossVersionTest", "integTest").any {
+        val classFileName = "src/$it/${testClassName.replace('.', '/')}"
+        return File(subProjectDir, "$classFileName.java").isFile || File(subProjectDir, "$classFileName.groovy").isFile
     }
 }
+
 
 interface BuildTypeBucket {
     // TODO: Hacky. We should really be running all the subprojects on macOS
@@ -321,6 +369,9 @@ data class SubprojectBucket(val name: String, val subprojects: List<GradleSubpro
 
     override fun hasTestsOf(testType: TestType) = subprojects.any { it.hasTestsOf(testType) }
 }
+
+data class TestClassTime(var testClass: String, var builtTimeMs: Int)
+data class BuildTypeTestClassTime(var name: String, var testClassTimes: List<TestClassTime>)
 
 data class GradleSubproject(val name: String, val unitTests: Boolean = true, val functionalTests: Boolean = true, val crossVersionTests: Boolean = false, val containsSlowTests: Boolean = false) : BuildTypeBucket {
     override fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage) = listOf(
