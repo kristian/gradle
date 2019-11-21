@@ -3,6 +3,7 @@ package Gradle_Check.model
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
+import com.google.common.collect.Lists
 import java.io.File
 import java.util.*
 
@@ -21,7 +22,7 @@ fun generateCIBuildModelSubProjects(gradleRootDir: File) {
     val testClassToSubProjectNameMap: Map<String, String> = getTestClassToSubProjectMap(buildTypeClassTimes, subProjects)
 
     val buildTypeBucketsMap = buildTypeClassTimes.map { it.name to createBucketsFor(it, testClassToSubProjectNameMap, 50) }.toMap()
-    objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
+    objectMapper.enable(SerializationFeature.INDENT_OUTPUT)
     File(gradleRootDir, "buckets.json").writeText(objectMapper.writeValueAsString(buildTypeBucketsMap))
 }
 
@@ -30,12 +31,12 @@ fun createBucketsFor(buildTypeClassTime: BuildTypeTestClassTime, testClassToSubP
     val subProjectTestClassTimes: List<SubProjectTestClassTime> = buildTypeClassTime.testClassTimes
         .groupBy { testClassToSubProject[it.testClass] }
         .entries
+        .filter { "UNKNOWN" != it.key }
         .map { SubProjectTestClassTime(it.key!!, it.value) }
         .sortedBy { -it.totalTime }
 
     return split(subProjectTestClassTimes, expectedBucketSize)
 }
-
 
 fun <T> split(list: List<T>, function: (T) -> Int, expectedBucketSize: Int): List<List<T>> {
     val originalList = ArrayList(list)
@@ -87,15 +88,6 @@ fun getTestClassToSubProjectMap(buildTypeTestClassTimes: List<BuildTypeTestClass
     .map { it to findOutSubProject(it, subProjects) }
     .toMap()
 
-
-//fun subProjectTestClassTimes(model: CIBuildModel,
-//                             testClassTimes: List<BuildTypeTestClassTime>,
-//                             testCoverage: TestCoverage): Map<String, List<TestClassTime>> {
-//    return testClassTimes.find { it.name == testCoverage.asId(model) }?.let { buildType ->
-//        buildType.testClassTimes.groupBy { findOutSubProject(it.testClass) }
-//    } ?: emptyMap()
-//}
-
 // Search subprojects
 fun findOutSubProject(testClassName: String, subProjects: Map<String, File>): String {
     val subProject = subProjects.entries.find { inSubProjectDir(it.value, testClassName) }
@@ -106,13 +98,21 @@ fun kebabCaseToCamelCase(kebabCase: String): String {
     return kebabCase.split('-').joinToString("") { it.capitalize() }.decapitalize()
 }
 
+val sourceSets = listOf("test", "integTest", "crossVersionTest", "smokeTest")
+val dirs = listOf("groovy", "kotlin", "java")
+val extensions = listOf("groovy", "kt", "java")
+
+val composition = Lists.cartesianProduct(sourceSets, dirs, extensions)
+
 fun inSubProjectDir(subProjectDir: File, testClassName: String): Boolean {
-    return listOf("test", "crossVersionTest", "integTest").any {
+    return composition.any {
+        val sourceSet = it[0]
+        val dir = it[1]
+        val extension = it[2]
         val classFileName = testClassName.replace('.', '/')
-        File(subProjectDir, "src/$it/java/$classFileName.java").isFile || File(subProjectDir, "src/$it/groovy/$classFileName.groovy").isFile
+        File(subProjectDir, "src/$sourceSet/$dir/$classFileName.$extension").isFile
     }
 }
-
 
 data class TestClassTime(var testClass: String, var buildTimeMs: Int) {
     constructor() : this("", 0)
@@ -154,108 +154,3 @@ data class SingleProject(val name: String) : Bucket
 data class LargeProjectSplit(val name: String, val include: Boolean, val testClasses: List<TestClassTime>) : Bucket
 
 data class SmallProjectBucket(val name: String, val subProjects: List<String>) : Bucket
-//
-//data class SubprojectBuildTime(val name: String, val testTime: List<TestClassTime>) : Comparable<SubprojectBuildTime> {
-//    val totalTime: Int = testTime.sumBy { it.builtTimeMs }
-//
-//    override fun compareTo(other: SubprojectBuildTime): Int {
-//        return other.totalTime.compareTo(totalTime)
-//    }
-//
-//    // Split current subproject into several buckets of capacity expectedBuildTimePerBucket
-//    fun split(expectedBuildTimePerBucket: Int): List<Any> {
-//        return if (totalTime < 1.1 * expectedBuildTimePerBucket) {
-//            listOf(this)
-//        } else {
-//            split(testTime, TestClassTime::builtTimeMs, expectedBuildTimePerBucket).map { LargeProjectSplit(name, it) }
-//        }
-////        val copy = ArrayList(testTime)
-////        val ret = mutableListOf<SubprojectBuildTime>()
-////
-////        while (copy.isNotEmpty()) {
-////            var restCapacity = expectedBuildTimePerBucket
-////            val testClasses = mutableListOf<TestClassTime>()
-////
-////            while (true) {
-////                // Find next largest object which can fit in resetCapacity
-////                val index = copy.indexOfFirst { it.builtTimeMs < restCapacity }
-////                if (index == -1 || copy.isEmpty()) {
-////                    break
-////                }
-////
-////                val testClass = copy[index]
-////                restCapacity -= testClass.builtTimeMs
-////                testClasses.add(testClass)
-////                copy.removeAt(index)
-////            }
-////
-////            ret.add(SubprojectBuildTime(name, testClasses))
-////        }
-////        return ret
-//    }
-//}
-
-
-// Given a list of time, e.g. [200, 200, 150, 80, 70, 50, 40, 30, 20, 10, 5, 5] (total: 860)
-// a bucket number: 5
-// time per bucket: 172
-// result: [[172],[28],[172],[28],[150],[80,70,20],[50,40,30,10,5,5]]
-//fun split(subProjectToAllTestClassTime: Map<String, List<TestClassTime>>, bucketNumber: Int): List<Any> {
-//    val subprojectQueue = LinkedList(subProjectToAllTestClassTime.entries.map { SubprojectBuildTime(it.key, it.value) }.sorted())
-//    val totalBuildTime = subprojectQueue.sumBy { it.totalTime }
-//    val buildTimePerBucket = totalBuildTime / bucketNumber
-//
-//    val ret: MutableList<Any> = mutableListOf()
-//
-//
-//    while (subprojectQueue.isNotEmpty()) {
-//        val longestSubProject = subprojectQueue.remove()
-//
-//        if (longestSubProject.totalTime > buildTimePerBucket) {
-//            ret.addAll(longestSubProject.split(buildTimePerBucket))
-//        } else {
-//            var restCapacity = buildTimePerBucket - longestSubProject.totalTime
-//            var subProjectList = mutableListOf<String>()
-//            while (true) {
-//                val index = subprojectQueue.indexOfFirst { it.totalTime > restCapacity }
-//                if (index == -1) {
-//                    break
-//                }
-//                val next = subprojectQueue.removeAt(index)
-//                subProjectList.add(next.name)
-//                restCapacity -= next.totalTime
-//            }
-//            ret.add(SmallProjectBucket(UUID.randomUUID().toString(), subProjectList))
-//        }
-//    }
-//    return ret
-//}
-
-//fun doSplit(subProjectQueue: LinkedList<SubprojectBuildTime>, expectedBuildTimePerBucket: Int): List<Any> {
-//    if (subProjectQueue.isEmpty()) {
-//        return listOf()
-//    }
-//    val longestSubProject = subProjectQueue.remove()
-//
-//    val ret: MutableList<Any> = mutableListOf()
-//
-//    if (longestSubProject.totalTime > expectedBuildTimePerBucket) {
-//        ret.addAll(longestSubProject.split(expectedBuildTimePerBucket))
-//    } else {
-//        var restCapacity = expectedBuildTimePerBucket - longestSubProject.totalTime
-//        var subProjectList = mutableListOf<String>()
-//        while (true) {
-//            val index = subProjectQueue.indexOfFirst { it.totalTime > restCapacity }
-//            if (index == -1) {
-//                break
-//            }
-//            val next = subProjectQueue.removeAt(index)
-//            subProjectList.add(next.name)
-//            restCapacity -= next.totalTime
-//        }
-//        ret.add(SmallProjectBucket(UUID.randomUUID().toString(), subProjectList))
-//    }
-//
-//    ret.addAll(doSplit(subProjectQueue, expectedBuildTimePerBucket))
-//}
-//
