@@ -200,13 +200,12 @@ data class CIBuildModel(
         GradleSubproject("internalAndroidPerformanceTesting", unitTests = false, functionalTests = false),
         GradleSubproject("performance", unitTests = false, functionalTests = false),
         GradleSubproject("runtimeApiInfo", unitTests = false, functionalTests = false),
-        GradleSubproject("smokeTest", unitTests = false, functionalTests = false)),
-    val testClassTimes: List<BuildTypeTestClassTime>
+        GradleSubproject("smokeTest", unitTests = false, functionalTests = false))
 ) {
     val buildTypeBuckets: List<BuildTypeBucket>
 
     init {
-        buildTypeBuckets = splitIntoBuckets(subProjects, testClassTimes)
+        buildTypeBuckets = listOf() // splitIntoBuckets(subProjects, testClassTimes)
 //        val subprojectMap = subProjects.map { it.name to it }.toMap()
 //        val buckets = mapOf(
 //            "resources" to listOf("resources", "resourcesGcs", "resourcesHttp", "resourcesS3", "resourcesSftp"),
@@ -251,41 +250,17 @@ data class CIBuildModel(
 //    // First, we need to know
 //}
 
-fun createFunctionalTestsFor(model: CIBuildModel,
-                             stage: Stage,
-                             testCoverage: TestCoverage,
-                             testClassTimes: List<BuildTypeTestClassTime>,
-                             bucketNumber: Int): List<FunctionalTest> {
-    val subProjectToAllTestClassTime: Map<String, List<TestClassTime>> = subProjectTestClassTimes(model, testClassTimes, testCoverage)
-    val totalBuildTime = subProjectToAllTestClassTime.values.flatten().sumBy { it.builtTimeMs }
-    val buildTimePerBucket = totalBuildTime/bucketNumber
+//fun createFunctionalTestsFor(model: CIBuildModel,
+//                             stage: Stage,
+//                             testCoverage: TestCoverage,
+//                             testClassTimes: List<BuildTypeTestClassTime>,
+//                             bucketNumber: Int): List<FunctionalTest> {
+//    val subProjectToAllTestClassTime: Map<String, List<TestClassTime>> = subProjectTestClassTimes(model, testClassTimes, testCoverage)
+//    val totalBuildTime = subProjectToAllTestClassTime.values.flatten().sumBy { it.builtTimeMs }
+//    val buildTimePerBucket = totalBuildTime / bucketNumber
+//
+//}
 
-}
-
-fun subProjectTestClassTimes(model: CIBuildModel,
-                             testClassTimes: List<BuildTypeTestClassTime>,
-                             testCoverage: TestCoverage): Map<String, List<TestClassTime>> {
-    return testClassTimes.find { it.name == testCoverage.asId(model) }?.let { buildType ->
-        buildType.testClassTimes.groupBy { findOutSubProject(it.testClass) }
-    } ?: emptyMap()
-}
-
-// Search subprojects
-fun findOutSubProject(testClassName: String): String {
-    val subProjectDir = File("../subprojects").listFiles()!!.find { inSubProjectDir(it!!, testClassName) }
-    return subProjectDir?.let { kebabCaseToCamelCase(it.name) } ?: "UNKNOWN"
-}
-
-fun kebabCaseToCamelCase(kebabCase: String): String {
-    return kebabCase.split('-').joinToString("") { it.capitalize() }.decapitalize()
-}
-
-fun inSubProjectDir(subProjectDir: File, testClassName: String): Boolean {
-    return listOf("test", "crossVersionTest", "integTest").any {
-        val classFileName = "src/$it/${testClassName.replace('.', '/')}"
-        return File(subProjectDir, "$classFileName.java").isFile || File(subProjectDir, "$classFileName.groovy").isFile
-    }
-}
 
 
 interface BuildTypeBucket {
@@ -370,8 +345,7 @@ data class SubprojectBucket(val name: String, val subprojects: List<GradleSubpro
     override fun hasTestsOf(testType: TestType) = subprojects.any { it.hasTestsOf(testType) }
 }
 
-data class TestClassTime(var testClass: String, var builtTimeMs: Int)
-data class BuildTypeTestClassTime(var name: String, var testClassTimes: List<TestClassTime>)
+
 
 data class GradleSubproject(val name: String, val unitTests: Boolean = true, val functionalTests: Boolean = true, val crossVersionTests: Boolean = false, val containsSlowTests: Boolean = false) : BuildTypeBucket {
     override fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage) = listOf(

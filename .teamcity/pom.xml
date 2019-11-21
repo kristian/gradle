@@ -95,6 +95,11 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.fasterxml.jackson.module</groupId>
+            <artifactId>jackson-module-kotlin</artifactId>
+            <version>2.9.7</version>
+        </dependency>
+        <dependency>
             <groupId>org.jetbrains.teamcity</groupId>
             <artifactId>configs-dsl-kotlin</artifactId>
             <version>${teamcity.dsl.version}</version>
