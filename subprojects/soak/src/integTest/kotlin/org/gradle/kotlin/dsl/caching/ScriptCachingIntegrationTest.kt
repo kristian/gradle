@@ -251,8 +251,8 @@ class ScriptCachingIntegrationTest : AbstractScriptCachingIntegrationTest() {
         }
 
         // expect: memory hog released
-        for (run in 1..400) {
-            println("**** ITERATION run ****")
+        for (run in 1..20) {
+            println("**** ITERATION $run ****")
 
             myTask.writeText(myTask.readText().replace("runAction${run - 1}", "runAction$run"))
             buildWithDaemonHeapSize(256, "myTask").apply {
