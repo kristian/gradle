@@ -2,41 +2,142 @@ package Gradle_Check.model
 
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.SerializationFeature
 import com.google.common.collect.Lists
+import configurations.FunctionalTest
+import model.BuildTypeBucket
+import model.CIBuildModel
+import model.GradleSubProject
+import model.Stage
+import model.TestCoverage
 import java.io.File
 import java.util.*
 
-fun main() {
-    generateCIBuildModelSubProjects(File("/Users/zhb/Projects/gradle"))
-//    println(inSubProjectDir(File("/Users/zhb/Projects/gradle/subprojects/composite-builds"), "org.gradle.integtests.composite.CompositeBuildBuildSrcIntegrationTest"))
+
+private
+val subProjectWithSlowTests = listOf("platformPlay")
+
+val sourceSets = listOf("test", "integTest", "crossVersionTest", "smokeTest")
+val dirs = listOf("groovy", "kotlin", "java")
+val extensions = listOf("groovy", "kt", "java")
+
+val composition = Lists.cartesianProduct(sourceSets, dirs, extensions)
+
+class GradleSubProjectProvider(val subProjectDir: File) {
+    val nameToSubProjectDirs: Map<String, File> = subProjectDir.listFiles().filter { isSubProjectDir(it) }.map { kebabCaseToCamelCase(it.name) to it }.toMap()
+    val subProjects: List<GradleSubProject> = nameToSubProjectDirs.values.map { toGradleSubProjectData(it) }
+
+    fun findOutSubProject(testClassName: String): String {
+        val subProject = nameToSubProjectDirs.entries.find { inSubProjectDir(it.value, testClassName) }
+        return subProject?.key ?: "UNKNOWN"
+    }
+
+    fun getSubProjectsFor(testConfig: TestCoverage, stage: Stage) =
+        subProjects.filterNot { it.containsSlowTests && stage.omitsSlowProjects }
+            .filter { it.hasTestsOf(testConfig.testType) }
+            .filterNot { testConfig.os.ignoredSubprojects.contains(it.name) }
+
+    fun getSubProjectByName(name: String?): GradleSubProject = subProjects.find { it.name == name }!!
+
+    private
+    fun kebabCaseToCamelCase(kebabCase: String): String {
+        return kebabCase.split('-').joinToString("") { it.capitalize() }.decapitalize()
+    }
+
+    private
+    fun toGradleSubProjectData(dir: File): GradleSubProject {
+        val name = kebabCaseToCamelCase(dir.name)
+        val hasUnitTests = File(dir, "test").isDirectory
+        val hasFunctionalTests = File(dir, "integTest").isDirectory
+        val hasCrossVersionTests = File(dir, "crossVersionTest").isDirectory
+        val hasSlowTests = name in subProjectWithSlowTests
+        return GradleSubProject(name, hasUnitTests, hasFunctionalTests, hasCrossVersionTests, hasSlowTests)
+    }
+
+    private
+    fun inSubProjectDir(subProjectDir: File, testClassName: String) =
+        composition.any {
+            val sourceSet = it[0]
+            val dir = it[1]
+            val extension = it[2]
+            val classFileName = testClassName.replace('.', '/')
+            File(subProjectDir, "src/$sourceSet/$dir/$classFileName.$extension").isFile
+        }
+
+    private
+    fun isSubProjectDir(dir: File) = dir.isDirectory && File(dir, "src").isDirectory
 }
 
-fun generateCIBuildModelSubProjects(gradleRootDir: File) {
-    val subProjectsDir = File(gradleRootDir, "subprojects")
-    val buildClassTimeJson = File(gradleRootDir, "test-class-data.json")
-    val objectMapper = ObjectMapper()
-    val buildTypeClassTimes: List<BuildTypeTestClassTime> = objectMapper.readValue<List<BuildTypeTestClassTime>>(buildClassTimeJson, object : TypeReference<List<BuildTypeTestClassTime>>() {})
+class GradleBuildBucketProvider(private val model: CIBuildModel, testTimeDataJson: File) {
+    //    val subProjects by subProjectProvider
+    // Each build project (e.g. Gradle_Check_Quick_1) has different bucket splits
+    private val objectMapper = ObjectMapper()
+    val buckets: Map<TestCoverage, List<BuildTypeBucket>> = buildBuckets(testTimeDataJson, model)
+    private val subProjectProvider = GradleSubProjectProvider(File(testTimeDataJson, "subprojects"))
 
-    val subProjects: Map<String, File> = subProjectsDir.listFiles()!!.filter { it.isDirectory }.map { kebabCaseToCamelCase(it.name) to it }.toMap()
-    val testClassToSubProjectNameMap: Map<String, String> = getTestClassToSubProjectMap(buildTypeClassTimes, subProjects)
+    private
+    fun buildBuckets(buildClassTimeJson: File, model: CIBuildModel): Map<TestCoverage, List<BuildTypeBucket>> {
+        println(buildClassTimeJson.readText().length)
+        val buildProjectClassTimes: List<BuildProjectTestClassTime> = objectMapper.readValue<List<BuildProjectTestClassTime>>(buildClassTimeJson, object : TypeReference<List<BuildProjectTestClassTime>>() {})
+        val testClassToSubProjectNameMap: Map<String, String> = getTestClassToSubProjectMap(buildProjectClassTimes)
 
-    val buildTypeBucketsMap = buildTypeClassTimes.map { it.name to createBucketsFor(it, testClassToSubProjectNameMap, 50) }.toMap()
-    objectMapper.enable(SerializationFeature.INDENT_OUTPUT)
-    File(gradleRootDir, "buckets.json").writeText(objectMapper.writeValueAsString(buildTypeBucketsMap))
+        val result = mutableMapOf<TestCoverage, List<BuildTypeBucket>>()
+        for (stage in model.stages) {
+            for (testConfig in stage.functionalTests) {
+                result[testConfig] = createBucketsForBuildProject(testConfig, stage, buildProjectClassTimes, testClassToSubProjectNameMap)
+            }
+        }
+        return result
+    }
+
+    private
+    fun createBucketsForBuildProject(testCoverage: TestCoverage, stage: Stage, buildProjectClassTimes: List<BuildProjectTestClassTime>, testClassToSubProject: Map<String, String>): List<BuildTypeBucket> {
+        val validSubProjects = subProjectProvider.getSubProjectsFor(testCoverage, stage)
+
+        // Build project not found, don't split into buckets
+        val buildProjectClassTime = buildProjectClassTimes.find { it.name == testCoverage.asId(model) } ?: return validSubProjects
+
+        val expectedBucketSize: Int = buildProjectClassTime.totalTime / testCoverage.expectedBucketNumber
+        val subProjectTestClassTimes: List<SubProjectTestClassTime> = buildProjectClassTime.testClassTimes
+            .groupBy { testClassToSubProject[it.testClass] }
+            .entries
+            .filter { "UNKNOWN" != it.key }
+            .map { SubProjectTestClassTime(subProjectProvider.getSubProjectByName(it.key), it.value) }
+            .sortedBy { -it.totalTime }
+
+        return split(subProjectTestClassTimes, expectedBucketSize)
+    }
+
+
+    private
+    fun split(subProjects: List<SubProjectTestClassTime>, expectedBucketSize: Int): List<BuildTypeBucket> {
+        val buckets: List<List<SubProjectTestClassTime>> = split(subProjects, SubProjectTestClassTime::totalTime, expectedBucketSize)
+        val ret = mutableListOf<BuildTypeBucket>()
+        buckets.forEach { subProjectsInBucket ->
+            if (subProjectsInBucket.size == 1) {
+                // Split large project to potential multiple buckets
+                ret.addAll(subProjectsInBucket[0].split(expectedBucketSize))
+            } else {
+                val subProjectNames = subProjectsInBucket.map { it.subProject.name }
+                ret.add(SmallSubProjectBucket(subProjectNames.joinToString("_"), subProjectsInBucket.map { it.subProject }))
+            }
+        }
+        return ret
+    }
+
+    private
+    fun getTestClassToSubProjectMap(buildTypeTestClassTimes: List<BuildProjectTestClassTime>): Map<String, String> = buildTypeTestClassTimes.map { it.testClassTimes }
+        .flatten()
+        .map { it.testClass }
+        .toSet()
+        .map { it to subProjectProvider.findOutSubProject(it) }
+        .toMap()
+
+
+    fun createFunctionalTestsFor(stage: Stage, testConfig: TestCoverage): List<FunctionalTest> {
+        TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+    }
 }
 
-fun createBucketsFor(buildTypeClassTime: BuildTypeTestClassTime, testClassToSubProject: Map<String, String>, roughBucketCount: Int): List<Bucket> {
-    val expectedBucketSize: Int = buildTypeClassTime.totalTime / roughBucketCount
-    val subProjectTestClassTimes: List<SubProjectTestClassTime> = buildTypeClassTime.testClassTimes
-        .groupBy { testClassToSubProject[it.testClass] }
-        .entries
-        .filter { "UNKNOWN" != it.key }
-        .map { SubProjectTestClassTime(it.key!!, it.value) }
-        .sortedBy { -it.totalTime }
-
-    return split(subProjectTestClassTimes, expectedBucketSize)
-}
 
 fun <T> split(list: List<T>, function: (T) -> Int, expectedBucketSize: Int): List<List<T>> {
     val originalList = ArrayList(list)
@@ -66,91 +167,90 @@ fun <T> split(list: List<T>, function: (T) -> Int, expectedBucketSize: Int): Lis
     return ret
 }
 
-fun split(subProjects: List<SubProjectTestClassTime>, expectedBucketSize: Int): List<Bucket> {
-    val buckets: List<List<SubProjectTestClassTime>> = split(subProjects, SubProjectTestClassTime::totalTime, expectedBucketSize)
-    val ret = mutableListOf<Bucket>()
-    buckets.forEach { subProjectsInBucket ->
-        if (subProjectsInBucket.size == 1) {
-            // Split large project to potential multiple buckets
-            ret.addAll(subProjectsInBucket[0].split(expectedBucketSize))
-        } else {
-            val subProjectNames = subProjectsInBucket.map { it.name }
-            ret.add(SmallProjectBucket(subProjectNames.joinToString("_"), subProjectNames))
-        }
-    }
-    return ret
+class LargeSubProjectSplitBucket(val subProject: GradleSubProject, val number: Int, val include: Boolean, val classes: List<TestClassTime>) : BuildTypeBucket by subProject {
+    val name = if (number == 1) subProject.name else "${subProject.name}_$number"
+
+    override fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage): FunctionalTest = FunctionalTest(model,
+        testCoverage.asConfigurationId(model, name),
+        "${testCoverage.asName()} ($name)",
+        "${testCoverage.asName()} for projects $name",
+        testCoverage,
+        stage,
+        listOf(subProject.name),
+        "-PtestBucket=$name"
+    )
 }
 
-fun getTestClassToSubProjectMap(buildTypeTestClassTimes: List<BuildTypeTestClassTime>, subProjects: Map<String, File>): Map<String, String> = buildTypeTestClassTimes.map { it.testClassTimes }
-    .flatten()
-    .map { it.testClass }
-    .toSet()
-    .map { it to findOutSubProject(it, subProjects) }
-    .toMap()
-
-// Search subprojects
-fun findOutSubProject(testClassName: String, subProjects: Map<String, File>): String {
-    val subProject = subProjects.entries.find { inSubProjectDir(it.value, testClassName) }
-    return subProject?.key ?: "UNKNOWN"
+class SmallSubProjectBucket(val name: String, val subProjects: List<GradleSubProject>) : BuildTypeBucket {
+    override fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage): FunctionalTest =
+        FunctionalTest(model, testCoverage.asConfigurationId(model, name),
+            "${testCoverage.asName()} (${subProjects.joinToString(", ") { name }})",
+            "${testCoverage.asName()} for ${subProjects.joinToString(", ") { name }}",
+            testCoverage,
+            stage,
+            subProjects.map { it.name }
+        )
 }
 
-fun kebabCaseToCamelCase(kebabCase: String): String {
-    return kebabCase.split('-').joinToString("") { it.capitalize() }.decapitalize()
-}
+//fun main() {
+//    generateCIBuildModelSubProjects(File("/Users/zhb/Projects/gradle"))
+////    println(inSubProjectDir(File("/Users/zhb/Projects/gradle/subprojects/composite-builds"), "org.gradle.integtests.composite.CompositeBuildBuildSrcIntegrationTest"))
+//}
 
-val sourceSets = listOf("test", "integTest", "crossVersionTest", "smokeTest")
-val dirs = listOf("groovy", "kotlin", "java")
-val extensions = listOf("groovy", "kt", "java")
+//val objectMapper = ObjectMapper()
 
-val composition = Lists.cartesianProduct(sourceSets, dirs, extensions)
+//fun scanGradleSubProjects(subProjectsDir: File): List<GradleSubProject> =
+//    subProjectsDir.listFiles()
+//        .filter { isSubProjectDir(it) }
+//        .map { toGradleSubProjectData(it) }
+//
+//
 
-fun inSubProjectDir(subProjectDir: File, testClassName: String): Boolean {
-    return composition.any {
-        val sourceSet = it[0]
-        val dir = it[1]
-        val extension = it[2]
-        val classFileName = testClassName.replace('.', '/')
-        File(subProjectDir, "src/$sourceSet/$dir/$classFileName.$extension").isFile
-    }
-}
+//fun generateCIBuildModelSubProjects(gradleRootDir: File) {
+//    val subProjectsDir = File(gradleRootDir, "subprojects")
+//    val buildClassTimeJson = File(gradleRootDir, "test-class-data.json")
+//    val buildTypeClassTimes: List<BuildTypeTestClassTime> = objectMapper.readValue<List<BuildTypeTestClassTime>>(buildClassTimeJson, object : TypeReference<List<BuildTypeTestClassTime>>() {})
+//    val subProjects: Map<String, File> = subProjectsDir.listFiles().filter { isSubProjectDir(it) }.map { kebabCaseToCamelCase(it.name) to it }.toMap()
+//
+////    val subProjects = scanGradleSubProjects(subProjectsDir)
+//    val testClassToSubProjectNameMap: Map<String, String> = getTestClassToSubProjectMap(buildTypeClassTimes, subProjects)
+//
+//    val buildTypeBucketsMap: Map<String, List<Bucket>> = buildTypeClassTimes.map { it.name to createBucketsFor(it, testClassToSubProjectNameMap, 40) }.toMap()
+//    objectMapper.enable(SerializationFeature.INDENT_OUTPUT)
+//    File(gradleRootDir, "buckets.json").writeText(objectMapper.writeValueAsString(buildTypeBucketsMap))
+//}
+
 
 data class TestClassTime(var testClass: String, var buildTimeMs: Int) {
     constructor() : this("", 0)
 }
 
-data class BuildTypeTestClassTime(var name: String, var testClassTimes: List<TestClassTime>) {
+data class BuildProjectTestClassTime(var name: String, var testClassTimes: List<TestClassTime>) {
     val totalTime: Int
         get() = testClassTimes.sumBy { it.buildTimeMs }
 
     constructor() : this("", emptyList())
 }
 
-data class SubProjectTestClassTime(val name: String, val testClassTimes: List<TestClassTime>) {
+data class SubProjectTestClassTime(val subProject: GradleSubProject, val testClassTimes: List<TestClassTime>) {
     val totalTime: Int = testClassTimes.sumBy { it.buildTimeMs }
 
-    fun split(expectedBuildTimePerBucket: Int): List<Bucket> {
+    fun split(expectedBuildTimePerBucket: Int): List<BuildTypeBucket> {
         return if (totalTime < 1.1 * expectedBuildTimePerBucket) {
-            listOf(SingleProject(name))
+            listOf(subProject)
         } else {
             val buckets: List<List<TestClassTime>> = split(testClassTimes, TestClassTime::buildTimeMs, expectedBuildTimePerBucket)
             return if (buckets.size == 1) {
-                listOf(SingleProject(name))
+                listOf(subProject)
             } else {
                 buckets.mapIndexed { index: Int, classesInBucket: List<TestClassTime> ->
-                    val bucketName = if (index == 0) name else "${name}_${index + 1}"
                     val include = index != buckets.size - 1
                     val classes = if (include) classesInBucket else buckets.subList(0, buckets.size - 1).flatten()
-                    LargeProjectSplit(bucketName, include, classes)
+                    LargeSubProjectSplitBucket(subProject, index + 1, include, classes)
                 }
             }
         }
     }
 }
 
-interface Bucket
 
-data class SingleProject(val name: String) : Bucket
-
-data class LargeProjectSplit(val name: String, val include: Boolean, val testClasses: List<TestClassTime>) : Bucket
-
-data class SmallProjectBucket(val name: String, val subProjects: List<String>) : Bucket
