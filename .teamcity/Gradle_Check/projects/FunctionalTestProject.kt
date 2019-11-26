@@ -16,11 +16,6 @@ class FunctionalTestProject(model: CIBuildModel, gradleBuildBucketProvider: Grad
     val functionalTests: List<FunctionalTest> = gradleBuildBucketProvider.createFunctionalTestsFor(stage, testConfig)
 
     init {
-//        val (deferredTests, currentTests) = model.buildTypeBuckets
-//            .filter { !it.shouldBeSkipped(testConfig) && it.hasTestsOf(testConfig.testType) }
-//            .partition { it.shouldBeSkippedInStage(stage) }
-        //            currentTests.flatMap { it.createFunctionalTestsFor(model, stage, testConfig) }
-//        deferredFunctionalTests.addAll(deferredTests.map { { stage: Stage -> it.createFunctionalTestsFor(model, stage, testConfig) } })
         functionalTests.forEach(this::buildType)
     }
 }

@@ -1,7 +1,5 @@
 package model
 
-import Gradle_Check.model.GradleBuildBucketProvider
-import Gradle_Check.model.GradleSubProjectProvider
 import common.BuildCache
 import common.JvmCategory
 import common.JvmVendor
@@ -16,7 +14,6 @@ import configurations.Gradleception
 import configurations.SanityCheck
 import configurations.SmokeTests
 import jetbrains.buildServer.configs.kotlin.v2018_2.BuildType
-import java.io.File
 
 enum class StageNames(override val stageName: String, override val description: String, override val uuid: String) : StageName {
     QUICK_FEEDBACK_LINUX_ONLY("Quick Feedback - Linux Only", "Run checks and functional tests (embedded executer, Linux)", "QuickFeedbackLinuxOnly"),
@@ -202,106 +199,9 @@ data class CIBuildModel(
         GradleSubProject("smokeTest", unitTests = false, functionalTests = false))
 )
 
-
-//fun splitIntoBuckets(subProjects: List<GradleSubProject>,
-//                     testClassTimes: List<BuildTypeTestClassTime>,
-//                     bucketNumber: Int): List<BuildTypeBucket> {
-//    // First, we need to know
-//}
-
-//fun createFunctionalTestsFor(model: CIBuildModel,
-//                             stage: Stage,
-//                             testCoverage: TestCoverage,
-//                             testClassTimes: List<BuildTypeTestClassTime>,
-//                             bucketNumber: Int): List<FunctionalTest> {
-//    val subProjectToAllTestClassTime: Map<String, List<TestClassTime>> = subProjectTestClassTimes(model, testClassTimes, testCoverage)
-//    val totalBuildTime = subProjectToAllTestClassTime.values.flatten().sumBy { it.builtTimeMs }
-//    val buildTimePerBucket = totalBuildTime / bucketNumber
-//
-//}
-
-
 interface BuildTypeBucket {
-    // TODO: Hacky. We should really be running all the subprojects on macOS
-    // But we're restricting this to just a subset of projects for now
-    // since we only have a small pool of macOS agents
-//    fun shouldBeSkipped(testCoverage: TestCoverage): Boolean
-
-//    fun containsSlowTests(): Boolean
-//    fun shouldBeSkippedInStage(stage: Stage): Boolean
-//    fun hasTestsOf(testType: TestType): Boolean
-//    fun getSubprojectNames(): List<String>
-
     fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage): FunctionalTest
 }
-//
-//data class SubprojectSplit(val subproject: GradleSubProject, val total: Int) : BuildTypeBucket by subproject, Validatable {
-//    override fun validate(consumer: ErrorConsumer) {
-//        if (total <= 1) {
-//            consumer.consumeError("Split number must be > 1: ${subproject.name} $total!")
-//        }
-//    }
-//
-//    private fun getName(number: Int) = if (number == 1) subproject.name else "${subproject.name}_$number"
-//
-//    override fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage) =
-//        (1..total).map { createFunctionalTestsFor(model, stage, testCoverage, getName(it), "-PtestSplit=$it/$total") }
-//
-//    private fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage, name: String, parameter: String): FunctionalTest = FunctionalTest(model,
-//        testCoverage.asConfigurationId(model, name),
-//        "${testCoverage.asName()} ($name)",
-//        "${testCoverage.asName()} for projects $name",
-//        testCoverage,
-//        stage,
-//        listOf(subproject.name),
-//        parameter
-//    )
-//}
-//
-//data class SubprojectBucket(val name: String, val subprojects: List<GradleSubProject>) : BuildTypeBucket, Validatable {
-//    override fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage) = listOf(
-//        FunctionalTest(model, testCoverage.asConfigurationId(model, name),
-//            "${testCoverage.asName()} (${subprojects.joinToString(", ") { it.name }})",
-//            "${testCoverage.asName()} for ${subprojects.joinToString(", ") { it.name }}",
-//            testCoverage,
-//            stage,
-//            subprojects.map { it.name }
-//        )
-//    )
-//
-//    override fun getSubprojectNames(): List<String> {
-//        return subprojects.map { it.name }
-//    }
-//
-//    override fun shouldBeSkippedInStage(stage: Stage) = stage.omitsSlowProjects && subprojects.any { it.containsSlowTests }
-//
-//    override fun validate(consumer: ErrorConsumer) {
-//        if (!hasSameProperties { it.unitTests } ||
-//            !hasSameProperties { it.functionalTests } ||
-//            !hasSameProperties { it.crossVersionTests }) {
-//            consumer.consumeError("All merged subprojects must have same properties: ${subprojects.joinToString(" ") { it.name }}")
-//        }
-//
-//        Os.values().forEach {
-//            val intersected = subprojects.intersect(it.ignoredSubprojects)
-//            if (intersected.isNotEmpty() && intersected.size != subprojects.size) {
-//                consumer.consumeError("Either all subprojects in a bucket are ignored, or none of them are ignored")
-//            }
-//        }
-//    }
-//
-//    private
-//    fun hasSameProperties(predicate: (GradleSubProject) -> Boolean): Boolean {
-//        val count = subprojects.count(predicate)
-//        return count == 0 || count == subprojects.size
-//    }
-//
-//    override fun shouldBeSkipped(testCoverage: TestCoverage) = subprojects.any { it.shouldBeSkipped(testCoverage) }
-//
-//    override fun containsSlowTests() = subprojects.any { it.containsSlowTests }
-//
-//    override fun hasTestsOf(testType: TestType) = subprojects.any { it.hasTestsOf(testType) }
-//}
 
 
 data class GradleSubProject(val name: String, val unitTests: Boolean = true, val functionalTests: Boolean = true, val crossVersionTests: Boolean = false, val containsSlowTests: Boolean = false) : BuildTypeBucket {
@@ -315,23 +215,7 @@ data class GradleSubProject(val name: String, val unitTests: Boolean = true, val
             listOf(name)
         )
 
-    //    override fun getSubprojectNames(): List<String> {
-//        return listOf(name)
-//    }
-//
-//    override fun shouldBeSkippedInStage(stage: Stage) = containsSlowTests && stage.omitsSlowProjects
-//
-//    override fun shouldBeSkipped(testCoverage: TestCoverage) = testCoverage.os.ignoredSubprojects.contains(name)
-//
-//    override fun containsSlowTests() = containsSlowTests
-//
     fun hasTestsOf(testType: TestType) = (unitTests && testType.unitTests) || (functionalTests && testType.functionalTests) || (crossVersionTests && testType.crossVersionTests)
-//
-//    fun asDirectoryName(): String {
-//        return name.replace(Regex("([A-Z])")) { "-" + it.groups[1]!!.value.toLowerCase() }
-//    }
-//
-//    fun hasOnlyUnitTests() = unitTests && !functionalTests && !crossVersionTests
 }
 
 interface StageName {

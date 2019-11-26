@@ -66,20 +66,19 @@ class StageProject(model: CIBuildModel, gradleBuildBucketProvider: GradleBuildBu
             }
 
         functionalTestProjects.forEach(this::subProject)
-//
-//        val deferredTestsForThisStage = if (stage.omitsSlowProjects) emptyList() else deferredFunctionalTests.toList().flatMap { it(stage) }
-//        if (deferredTestsForThisStage.isNotEmpty()) {
-//            deferredFunctionalTests.clear()
-//            val deferredTestsProject = Project {
-//                uuid = "${rootProjectUuid}_deferred_tests"
-//                id = AbsoluteId(uuid)
-//                name = "Test coverage deferred from Quick Feedback and Ready for Merge"
-//                deferredTestsForThisStage.forEach(this::buildType)
-//            }
-//            subProject(deferredTestsProject)
-//        }
 
-        functionalTests = topLevelFunctionalTests + functionalTestProjects.flatMap(FunctionalTestProject::functionalTests) //+ deferredTestsForThisStage
+        val deferredTestsForThisStage = gradleBuildBucketProvider.createDeferredFunctionalTestsFor(stage)
+        if (deferredTestsForThisStage.isNotEmpty()) {
+            val deferredTestsProject = Project {
+                uuid = "${rootProjectUuid}_deferred_tests"
+                id = AbsoluteId(uuid)
+                name = "Test coverage deferred from Quick Feedback and Ready for Merge"
+                deferredTestsForThisStage.forEach(this::buildType)
+            }
+            subProject(deferredTestsProject)
+        }
+
+        functionalTests = topLevelFunctionalTests + functionalTestProjects.flatMap(FunctionalTestProject::functionalTests) + deferredTestsForThisStage
     }
 }
 

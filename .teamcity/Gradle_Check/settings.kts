@@ -1,6 +1,6 @@
 package Gradle_Check
 
-import Gradle_Check.model.GradleBuildBucketProvider
+import Gradle_Check.model.StatisticBasedGradleBuildBucketProvider
 import jetbrains.buildServer.configs.kotlin.v2018_2.project
 import jetbrains.buildServer.configs.kotlin.v2018_2.version
 import model.CIBuildModel
@@ -29,5 +29,5 @@ calling the subProjects() method in this project.
 
 version = "2019.1"
 val model = CIBuildModel(buildScanTags = listOf("Check"))
-val gradleBuildBucketProvider = GradleBuildBucketProvider(model, File("./test-class-data.json").absoluteFile)
+val gradleBuildBucketProvider = StatisticBasedGradleBuildBucketProvider(model, File("./test-class-data.json").absoluteFile)
 project(RootProject(model,gradleBuildBucketProvider))
