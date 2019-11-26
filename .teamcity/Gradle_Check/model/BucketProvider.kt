@@ -29,8 +29,8 @@ class StatisticBasedGradleBuildBucketProvider(private val model: CIBuildModel, t
         // The first stage which doesn't omit slow projects
         val deferredStage = model.stages.find { !it.omitsSlowProjects }!!
         val deferredStageIndex = model.stages.indexOfFirst { !it.omitsSlowProjects }
-        if (stage.stageName != deferredStage.stageName) {
-            return emptyList()
+        return if (stage.stageName != deferredStage.stageName) {
+            emptyList()
         } else {
             val stages = model.stages.subList(0, deferredStageIndex)
             val deferredTests = mutableListOf<FunctionalTest>()
@@ -39,7 +39,7 @@ class StatisticBasedGradleBuildBucketProvider(private val model: CIBuildModel, t
                     deferredTests.addAll(subProjectProvider.getSlowSubProjects().map { it.createFunctionalTestsFor(model, eachStage, testConfig) })
                 }
             }
-            return deferredTests
+            deferredTests
         }
     }
 
@@ -73,7 +73,6 @@ class StatisticBasedGradleBuildBucketProvider(private val model: CIBuildModel, t
             .filter { "UNKNOWN" != it.key }
             .filter { subProjectProvider.getSubProjectByName(it.key) != null }
             .map { SubProjectTestClassTime(subProjectProvider.getSubProjectByName(it.key)!!, it.value) }
-            .sortedBy { -it.totalTime }
         val expectedBucketSize: Int = subProjectTestClassTimes.sumBy { it.totalTime } / testCoverage.expectedBucketNumber
 
         return split(subProjectTestClassTimes, expectedBucketSize)
@@ -107,7 +106,12 @@ class GradleSubProjectProvider(private val subProjects: List<GradleSubProject>) 
     fun getSlowSubProjects() = subProjects.filter { it.containsSlowTests }
 }
 
-
+/**
+ * Split a list of object into buckets with expected size.
+ *
+ * For example, we have a list of number [9, 1, 2, 10, 4, 5] and the expected size is 5,
+ * the result buckets will be [[10], [9], [5], [4, 1], [2]]
+ */
 fun <T> split(list: List<T>, function: (T) -> Int, expectedBucketSize: Int): List<List<T>> {
     val originalList = ArrayList(list)
     val ret = mutableListOf<List<T>>()
@@ -189,5 +193,3 @@ class SubProjectTestClassTime(val subProject: GradleSubProject, val testClassTim
         }
     }
 }
-
-

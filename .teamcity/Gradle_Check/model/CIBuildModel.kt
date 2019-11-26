@@ -203,7 +203,6 @@ interface BuildTypeBucket {
     fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage): FunctionalTest
 }
 
-
 data class GradleSubProject(val name: String, val unitTests: Boolean = true, val functionalTests: Boolean = true, val crossVersionTests: Boolean = false, val containsSlowTests: Boolean = false) : BuildTypeBucket {
     override fun createFunctionalTestsFor(model: CIBuildModel, stage: Stage, testCoverage: TestCoverage) =
         FunctionalTest(model,
@@ -216,6 +215,10 @@ data class GradleSubProject(val name: String, val unitTests: Boolean = true, val
         )
 
     fun hasTestsOf(testType: TestType) = (unitTests && testType.unitTests) || (functionalTests && testType.functionalTests) || (crossVersionTests && testType.crossVersionTests)
+
+    fun asDirectoryName(): String {
+        return name.replace(Regex("([A-Z])")) { "-" + it.groups[1]!!.value.toLowerCase() }
+    }
 }
 
 interface StageName {
@@ -227,25 +230,11 @@ interface StageName {
         get() = stageName.replace(" ", "").replace("-", "")
 }
 
-data class Stage(val stageName: StageName,
-                 val specificBuilds: List<SpecificBuild> = emptyList(),
-                 val performanceTests: List<PerformanceTestType> = emptyList(),
-                 val functionalTests: List<TestCoverage> = emptyList(),
-                 val trigger: Trigger = Trigger.never,
-                 val functionalTestsDependOnSpecificBuilds: Boolean = false,
-                 val runsIndependent: Boolean = false,
-                 val omitsSlowProjects: Boolean = false,
-                 val dependsOnSanityCheck: Boolean = false) {
+data class Stage(val stageName: StageName, val specificBuilds: List<SpecificBuild> = emptyList(), val performanceTests: List<PerformanceTestType> = emptyList(), val functionalTests: List<TestCoverage> = emptyList(), val trigger: Trigger = Trigger.never, val functionalTestsDependOnSpecificBuilds: Boolean = false, val runsIndependent: Boolean = false, val omitsSlowProjects: Boolean = false, val dependsOnSanityCheck: Boolean = false) {
     val id = stageName.id
 }
 
-data class TestCoverage(val uuid: Int,
-                        val testType: TestType,
-                        val os: Os,
-                        val testJvmVersion: JvmVersion,
-                        val vendor: JvmVendor = JvmVendor.oracle,
-                        val buildJvmVersion: JvmVersion = JvmVersion.java11,
-                        val expectedBucketNumber: Int = 40) {
+data class TestCoverage(val uuid: Int, val testType: TestType, val os: Os, val testJvmVersion: JvmVersion, val vendor: JvmVendor = JvmVendor.oracle, val buildJvmVersion: JvmVersion = JvmVersion.java11, val expectedBucketNumber: Int = 40) {
     fun asId(model: CIBuildModel): String {
         return "${model.projectPrefix}$testCoveragePrefix"
     }

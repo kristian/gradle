@@ -33,7 +33,6 @@ class RootProject(model: CIBuildModel, gradleBuildBucketProvider: GradleBuildBuc
     }
 
     var prevStage: Stage? = null
-//    val deferredFunctionalTests = mutableListOf<(Stage) -> List<FunctionalTest>>()
     model.stages.forEach { stage ->
         val stageProject = StageProject(model, gradleBuildBucketProvider, stage, uuid)
         val stagePasses = StagePasses(model, stage, prevStage, stageProject)
