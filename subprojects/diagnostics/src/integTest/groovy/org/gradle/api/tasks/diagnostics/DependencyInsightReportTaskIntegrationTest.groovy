@@ -2148,7 +2148,7 @@ org:leaf3:1.0
         fails "dependencyInsight", "--dependency", "foo", "--configuration", "api"
 
         then:
-        failure.assertHasCause("Resolving configuration 'api' directly is not allowed")
+        failure.assertHasCause("Resolving dependency configuration 'api' on its own is not allowed")
 
         when:
         run "dependencyInsight", "--dependency", "foo", "--configuration", "compile"

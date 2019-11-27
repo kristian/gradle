@@ -50,7 +50,7 @@ class ConfigurationRoleIntegrationTest extends AbstractIntegrationSpec {
         fails 'checkState'
 
         then:
-        failure.assertHasCause("Resolving configuration 'internal' directly is not allowed")
+        failure.assertHasCause("Resolving dependency configuration 'internal' on its own is not allowed")
 
         where:
         role                      | code
@@ -82,7 +82,7 @@ class ConfigurationRoleIntegrationTest extends AbstractIntegrationSpec {
         fails 'checkState'
 
         then:
-        failure.assertHasCause("Resolving configuration 'internal' directly is not allowed")
+        failure.assertHasCause("Resolving dependency configuration 'internal' on its own is not allowed")
 
         where:
         role                      | code
@@ -117,7 +117,7 @@ class ConfigurationRoleIntegrationTest extends AbstractIntegrationSpec {
         fails 'checkState'
 
         then:
-        failure.assertHasCause("Resolving configuration 'internal' directly is not allowed")
+        failure.assertHasCause("Resolving dependency configuration 'internal' on its own is not allowed")
 
         where:
         [method, role] << [
