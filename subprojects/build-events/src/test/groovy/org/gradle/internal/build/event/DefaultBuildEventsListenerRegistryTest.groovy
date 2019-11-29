@@ -16,10 +16,10 @@
 
 package org.gradle.internal.build.event
 
-import org.gradle.api.internal.GradleInternal
+import org.gradle.BuildListener
+import org.gradle.BuildResult
 import org.gradle.api.internal.provider.Providers
 import org.gradle.initialization.BuildEventConsumer
-import org.gradle.initialization.RootBuildLifecycleListener
 import org.gradle.internal.build.event.types.DefaultTaskDescriptor
 import org.gradle.internal.build.event.types.DefaultTaskFailureResult
 import org.gradle.internal.build.event.types.DefaultTaskFinishedProgressEvent
@@ -27,17 +27,22 @@ import org.gradle.internal.build.event.types.DefaultTaskSkippedResult
 import org.gradle.internal.build.event.types.DefaultTaskSuccessResult
 import org.gradle.internal.event.DefaultListenerManager
 import org.gradle.internal.operations.BuildOperationListenerManager
+import org.gradle.test.fixtures.concurrent.ConcurrentSpec
 import org.gradle.tooling.events.OperationCompletionListener
 import org.gradle.tooling.events.task.TaskFailureResult
 import org.gradle.tooling.events.task.TaskFinishEvent
 import org.gradle.tooling.events.task.TaskSkippedResult
 import org.gradle.tooling.events.task.TaskSuccessResult
-import spock.lang.Specification
 
-class DefaultBuildEventsListenerRegistryTest extends Specification {
+class DefaultBuildEventsListenerRegistryTest extends ConcurrentSpec {
     def factory = new MockBuildEventListenerFactory()
     def listenerManager = new DefaultListenerManager()
-    def registry = new DefaultBuildEventsListenerRegistry([factory], listenerManager, Stub(BuildOperationListenerManager))
+    def registry = new DefaultBuildEventsListenerRegistry([factory], listenerManager, Stub(BuildOperationListenerManager), executorFactory)
+
+    def cleanup() {
+        // Signal the end of the build, to stop everything
+        signalBuildFinished()
+    }
 
     def "listener receives task finish events"() {
         def listener = Mock(OperationCompletionListener)
@@ -54,9 +59,12 @@ class DefaultBuildEventsListenerRegistryTest extends Specification {
         0 * listener._
 
         when:
-        factory.fire(success)
-        factory.fire(failure)
-        factory.fire(skipped)
+        async {
+            factory.fire(success)
+            factory.fire(failure)
+            factory.fire(skipped)
+            signalBuildFinished()
+        }
 
         then:
         1 * listener.onFinish({ it instanceof TaskFinishEvent && it.result instanceof TaskSuccessResult })
@@ -78,25 +86,36 @@ class DefaultBuildEventsListenerRegistryTest extends Specification {
     }
 
     def "broken listener is quarantined and failure rethrown at completion of build"() {
-        def listener = Mock(OperationCompletionListener)
-        def provider = Providers.of(listener)
         def failure = new RuntimeException()
+        def listener1 = Mock(OperationCompletionListener)
+        def listener2 = Mock(OperationCompletionListener)
 
         when:
-        registry.subscribe(provider)
-        factory.fire(taskFinishEvent())
-        factory.fire(taskFinishEvent())
+        registry.subscribe(Providers.of(listener1))
+        registry.subscribe(Providers.of(listener2))
+        async {
+            factory.fire(taskFinishEvent())
+            thread.blockUntil.handled
+            factory.fire(taskFinishEvent())
+            signalBuildFinished()
+        }
 
         then:
-        1 * listener.onFinish(_) >> { throw failure }
-        0 * listener._
+        1 * listener1.onFinish(_) >> {
+            instant.handled
+            throw failure
+        }
+        2 * listener2.onFinish(_)
+        0 * listener1._
+        0 * listener2._
 
-        when:
-        listenerManager.getBroadcaster(RootBuildLifecycleListener).beforeComplete(Stub(GradleInternal))
-
-        then:
+        and:
         def e = thrown(RuntimeException)
         e.is(failure)
+    }
+
+    private signalBuildFinished() {
+        listenerManager.getBroadcaster(BuildListener).buildFinished(Stub(BuildResult))
     }
 
     private DefaultTaskFinishedProgressEvent taskFinishEvent() {
@@ -112,15 +131,17 @@ class DefaultBuildEventsListenerRegistryTest extends Specification {
     }
 
     class MockBuildEventListenerFactory implements BuildEventListenerFactory {
-        private BuildEventConsumer consumer
+        private List<BuildEventConsumer> consumers = []
 
         def fire(Object event) {
-            consumer.dispatch(event)
+            consumers.forEach {
+                it.dispatch(event)
+            }
         }
 
         @Override
         Iterable<Object> createListeners(BuildEventSubscriptions subscriptions, BuildEventConsumer consumer) {
-            this.consumer = consumer
+            consumers.add(consumer)
             return []
         }
     }
